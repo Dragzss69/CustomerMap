@@ -7,6 +7,8 @@ hampir seluruhnya oleh tanggal order terakhir seperti pada model RapidMiner (v1)
 Perbedaan dari training.py (v1):
   1. Recency  : "hari sejak order terakhir" terhadap tanggal acuan (SNAPSHOT_DATE,
                 sama dengan RapidMiner), bukan hari dalam bulan (1-31).
+  1b. Jendela : RFM dihitung dari order dalam WINDOW_DAYS (30) hari terakhir saja, jadi
+                Frequency/Monetary = aktivitas bulanan dan Recency bernilai 1..30.
   2. Skewness : sum_order_total dan count_order_total di-log (log1p) sebelum normalisasi.
   3. Outlier  : dideteksi setelah transformasi dan normalisasi sementara, sehingga ketiga
                 fitur berbobot sama (v1: pada skala asli, didominasi total belanja).
@@ -47,6 +49,12 @@ OUTLIER_COUNT = 100
 # Isi None untuk memakai tanggal order terakhir di dataset.
 SNAPSHOT_DATE = "2025-10-30"
 
+# Jendela RFM bulanan: hanya order dalam WINDOW_DAYS hari terakhir (termasuk hari SNAPSHOT_DATE) yang dipakai.
+#   Frequency = jumlah order di jendela, Monetary = total belanja di jendela,
+#   Recency   = 1..WINDOW_DAYS (1 = order terakhir pada hari acuan, WINDOW_DAYS = hari pertama jendela).
+# Isi None untuk memakai seluruh riwayat order (perilaku lama).
+WINDOW_DAYS = 30
+
 FEATURES = ["sum_order_total", "count_order_total", "recency_days"]
 LOG_FEATURES = ["sum_order_total", "count_order_total"]   # di-log1p sebelum normalisasi
 
@@ -60,22 +68,36 @@ SCALER_PATH = Path(__file__).resolve().parent / "scaler_v2.pkl"
 # Fungsi tahapan
 # ----------------------------------------------------------------------------
 def build_customer_features(df: pd.DataFrame):
-    """Aggregate per customer + recency. Mengembalikan (fitur, snapshot_date)."""
+    """Filter jendela + aggregate per customer + recency. Mengembalikan (fitur, snapshot, window_start)."""
     df = df[[ID_COL, DATE_COL, VALUE_COL]].copy()
     df[DATE_COL] = pd.to_datetime(df[DATE_COL])
     if SNAPSHOT_DATE is not None:
         snapshot = pd.Timestamp(SNAPSHOT_DATE)
     else:
         snapshot = df[DATE_COL].max().normalize()
+    end_excl = snapshot + pd.Timedelta(days=1)          # batas akhir (tidak termasuk)
+
+    window_start = None
+    if WINDOW_DAYS:
+        window_start = snapshot - pd.Timedelta(days=WINDOW_DAYS - 1)
+        n_all = len(df)
+        df = df[(df[DATE_COL] >= window_start) & (df[DATE_COL] < end_excl)]
+        print(f"Jendela RFM {WINDOW_DAYS} hari: {window_start.date()} s/d {snapshot.date()} "
+              f"-> {len(df)} dari {n_all} order dipakai")
+        if df.empty:
+            raise ValueError("Tidak ada order dalam jendela. Periksa SNAPSHOT_DATE dan WINDOW_DAYS.")
 
     agg = df.groupby(ID_COL).agg(
         sum_order_total=(VALUE_COL, "sum"),
         count_order_total=(VALUE_COL, "count"),
         last_order=(DATE_COL, "max"),
     )
-    # Setara: date_diff(maximum(order_date), snapshot) / (1000*60*60*24)  -> hari (bisa desimal)
-    agg["recency_days"] = (snapshot - agg["last_order"]).dt.total_seconds() / 86400.0
-    return agg[FEATURES], snapshot
+    if WINDOW_DAYS:
+        # 1 = order terakhir di hari acuan ... WINDOW_DAYS = hari pertama jendela (bulat ke atas)
+        agg["recency_days"] = np.ceil((end_excl - agg["last_order"]).dt.total_seconds() / 86400.0)
+    else:
+        agg["recency_days"] = (snapshot - agg["last_order"]).dt.total_seconds() / 86400.0
+    return agg[FEATURES], snapshot, window_start
 
 
 def apply_log(feats: pd.DataFrame) -> pd.DataFrame:
@@ -131,7 +153,7 @@ def main(input_path: Path, model_path: Path):
     raw = pd.read_csv(input_path)
     print(f"Data awal: {raw.shape[0]} baris")
 
-    customers, snapshot = build_customer_features(raw)
+    customers, snapshot, window_start = build_customer_features(raw)
     print(f"Jumlah customer: {len(customers)} | tanggal acuan recency (snapshot): {snapshot.date()}")
 
     if (customers["recency_days"] < 0).any():
@@ -142,9 +164,13 @@ def main(input_path: Path, model_path: Path):
     X_log = apply_log(customers)
 
     # Outlier (pada data ter-transformasi + normalisasi sementara)
-    if REMOVE_OUTLIERS:
-        if len(customers) <= max(OUTLIER_NEIGHBORS + 1, OUTLIER_COUNT):
-            raise ValueError(f"Customer ({len(customers)}) terlalu sedikit untuk deteksi outlier.")
+    outliers_removed = REMOVE_OUTLIERS
+    if REMOVE_OUTLIERS and len(customers) <= max(OUTLIER_NEIGHBORS + 1, OUTLIER_COUNT):
+        print(f"PERINGATAN: customer ({len(customers)}) terlalu sedikit untuk deteksi outlier "
+              f"(k={OUTLIER_NEIGHBORS}, outlier={OUTLIER_COUNT}). Deteksi outlier dilewati; "
+              "kecilkan OUTLIER_COUNT jika ingin tetap membuang outlier.")
+        outliers_removed = False
+    if outliers_removed:
         tmp_scaled = MinMaxScaler().fit_transform(X_log)
         outlier_mask = detect_outliers_distance(tmp_scaled, OUTLIER_NEIGHBORS, OUTLIER_COUNT)
     else:
@@ -201,15 +227,18 @@ def main(input_path: Path, model_path: Path):
         "preprocess": {
             "version": 2,
             "log_features": LOG_FEATURES,
-            "recency": "days_since_snapshot",
+            "recency": "days_in_window" if WINDOW_DAYS else "days_since_snapshot",
             "snapshot_date": snapshot,
+            "window_days": WINDOW_DAYS,
+            "window_start": window_start,
+            "recency_offset": 1 if WINDOW_DAYS else 0,
         },
         "config": {
             "n_clusters": N_CLUSTERS,
             "n_init": N_INIT,
             "max_iter": MAX_ITER,
             "random_seed": RANDOM_SEED,
-            "remove_outliers": REMOVE_OUTLIERS,
+            "remove_outliers": outliers_removed,
             "outlier_neighbors": OUTLIER_NEIGHBORS,
             "outlier_count": OUTLIER_COUNT,
         },
