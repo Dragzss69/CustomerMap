@@ -214,30 +214,6 @@ def feature_influence(art: dict) -> pd.DataFrame:
     )
 
 
-def interpret_silhouette(s: float) -> str:
-    if s > 0.70:
-        return "Struktur cluster **kuat** (pemisahan antar cluster sangat jelas)."
-    if s > 0.50:
-        return "Struktur cluster **baik** (cluster cukup terpisah)."
-    if s > 0.25:
-        return "Struktur cluster **lemah** (cluster ada yang saling tumpang tindih)."
-    return "Struktur cluster **tidak jelas** (pertimbangkan fitur atau jumlah k lain)."
-
-
-def interpret_dbi(d: float) -> str:
-    if d < 0.5:
-        return "Nilai sangat kecil: cluster padat dan terpisah baik."
-    if d < 1.0:
-        return "Nilai kecil: kualitas cluster baik."
-    if d < 1.5:
-        return "Nilai sedang: ada tumpang tindih antar cluster."
-    return "Nilai besar: cluster kurang terpisah."
-
-
-def delta_text(cur, base):
-    return None if base is None or cur is None else f"{cur - base:+.4f} vs training"
-
-
 # ----------------------------------------------------------------------------
 # Tampilan halaman
 # ----------------------------------------------------------------------------
@@ -260,8 +236,6 @@ def page_evaluasi(art: dict = None):
     features = art["features"]
     km = art["model"]
     cluster_labels = art["cluster_labels"]
-    log_feats = art["preprocess"]["log_features"]
-    snap = pd.Timestamp(art["preprocess"]["snapshot_date"])
     cfg = art.get("config", {})
     tm = art.get("metrics", {})
     model_sig = hash(km.cluster_centers_.tobytes())
@@ -329,18 +303,6 @@ def page_evaluasi(art: dict = None):
             mime="text/csv",
         )
 
-        st.subheader("Jumlah & profil tiap segmen (rata-rata, satuan asli)")
-        prof = result.groupby("Segmen").agg(
-            Jumlah=("cluster", "size"),
-            **{FEATURE_NAMES[f]: (f, "mean") for f in features},
-        )
-        prof["Persentase"] = prof["Jumlah"] / prof["Jumlah"].sum() * 100
-        st.dataframe(prof.style.format("{:,.2f}"), width="stretch")
-
-        if m["n_outliers"]:
-            with st.expander(f"Lihat {m['n_outliers']} customer outlier yang dibuang"):
-                st.dataframe(out["outliers"], width="stretch")
-
         names = [FEATURE_NAMES[f] for f in features]
 
         # Gunakan data ternormalisasi (0–1) dan centroid ternormalisasi.
@@ -393,23 +355,11 @@ def page_evaluasi(art: dict = None):
                        "masuk ke satu cluster atau terlalu sedikit.")
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("Silhouette Score",
-                  "-" if m["silhouette"] is None else f"{m['silhouette']:.4f}",
-                  delta=delta_text(m["silhouette"], ts), help="Semakin tinggi semakin baik (maks 1).")
+                  "-" if m["silhouette"] is None else f"{m['silhouette']:.4f}")
         c2.metric("Davies-Bouldin Index (DBI)",
-                  "-" if m["davies_bouldin"] is None else f"{m['davies_bouldin']:.4f}",
-                  delta=delta_text(m["davies_bouldin"], td), delta_color="inverse",
-                  help="Semakin kecil semakin baik (min 0).")
-        c3.metric("Avg. within centroid distance", f"{m['avg_within']:.4f}",
-                  delta=delta_text(m["avg_within"], ta), delta_color="inverse",
-                  help="Rata-rata jarak data ke centroid cluster-nya (skala 0–1).")
-        c4.metric("Inertia (SSE)", f"{m['inertia']:.4f}", help="Total kuadrat jarak ke centroid.")
-
-        if m["silhouette"] is not None:
-            st.markdown(f"- **Silhouette:** {interpret_silhouette(m['silhouette'])}")
-            st.markdown(f"- **DBI:** {interpret_dbi(m['davies_bouldin'])}")
-        if ts is not None:
-            st.caption("Delta dibandingkan nilai saat training. Jika dataset yang diunggah sama dengan data "
-                       "training, nilainya seharusnya hampir sama.")
+                  "-" if m["davies_bouldin"] is None else f"{m['davies_bouldin']:.4f}")
+        c3.metric("Avg. within centroid distance", f"{m['avg_within']:.4f}")
+        c4.metric("Inertia (SSE)", f"{m['inertia']:.4f}")
 
         left, right = st.columns(2)
         with left:
