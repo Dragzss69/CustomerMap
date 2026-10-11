@@ -1,9 +1,11 @@
 import pickle
-from datetime import date, timedelta
+from datetime import date
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 # Model hasil training_v2.py (dicari di CustomerMap/Model/, Menu/, App/, CustomerMap/)
@@ -15,12 +17,6 @@ MODEL_FILENAME = "kmeans_model_v2.pkl"
 # Input Monetary (Rp) di aplikasi dibagi nilai ini sebelum masuk ke model,
 # sehingga skalanya sama persis dengan data saat training.
 ORDER_TOTAL_UNIT = 1000.0
-
-CLUSTER_ICONS = {
-    "Pelanggan Loyal": "🏆",
-    "Pelanggan Reguler": "🙂",
-    "Pelanggan Pasif": "😴",
-}
 
 CLUSTER_DESC = {
     "Pelanggan Loyal": "Sering memesan dengan total belanja tinggi dan masih aktif. "
@@ -37,7 +33,23 @@ FEATURE_NAMES = {
     "recency_days": "Recency (hari sejak order terakhir)",
 }
 
-SEGMENT_ORDER = ("Pelanggan Reguler", "Pelanggan Pasif", "Pelanggan Loyal")
+SEGMENT_ORDER = ("Pelanggan Loyal", "Pelanggan Reguler", "Pelanggan Pasif")
+
+SEGMENT_COLORS = {
+    "Pelanggan Loyal": "#3b82f6",
+    "Pelanggan Reguler": "#2e9e5b",
+    "Pelanggan Pasif": "#f59e0b",
+}
+CUSTOMER_COLOR = "#8b5cf6"
+
+SEGMENT_ACTIONS = {
+    "Pelanggan Loyal": ["Beri poin reward atau program loyalitas", "Tawarkan akses promo eksklusif",
+                        "Ajak memberi ulasan atau referral"],
+    "Pelanggan Reguler": ["Kirim voucher bundling", "Beri diskon untuk pembelian berikutnya",
+                          "Dorong target order bulanan agar naik jadi loyal"],
+    "Pelanggan Pasif": ["Kirim voucher comeback", "Kirim notifikasi personal (push atau WhatsApp)",
+                        "Lakukan survei alasan berhenti"],
+}
 
 
 # ----------------------------------------------------------------------------
@@ -73,6 +85,15 @@ def validate_artifact(art: dict) -> None:
         )
 
 
+def check_window(art: dict) -> None:
+    """Input recency 1..N hanya cocok dengan model yang dilatih pada jendela RFM N hari."""
+    if not art["preprocess"].get("window_days"):
+        raise ValueError(
+            "Model ini dilatih pada seluruh riwayat order, bukan jendela RFM bulanan, sehingga tidak cocok "
+            "dengan input recency 1–30. Jalankan training_v2.py versi terbaru (WINDOW_DAYS = 30)."
+        )
+
+
 def load_model_artifact(filename: str = MODEL_FILENAME) -> dict:
     """Memuat .pkl (model, scaler, fitur, label, metrik). Dimuat ulang otomatis jika file diganti."""
     path = find_model_path(filename)
@@ -83,6 +104,7 @@ def load_model_artifact(filename: str = MODEL_FILENAME) -> dict:
         )
     art = _read_artifact(str(path), path.stat().st_mtime)
     validate_artifact(art)
+    check_window(art)
     return art
 
 
@@ -129,8 +151,9 @@ def predict(art: dict, total: float, count: int, last_date: date, days_since=Non
                    terhadap tanggal acuan training (snapshot_date)
     """
     if days_since is None:
-        snap = pd.Timestamp(art["preprocess"]["snapshot_date"])
-        days_since = (snap - pd.Timestamp(last_date)).days
+        pre = art["preprocess"]
+        snap = pd.Timestamp(pre["snapshot_date"]).normalize()
+        days_since = (snap - pd.Timestamp(last_date).normalize()).days + pre.get("recency_offset", 0)
 
     values = {
         "sum_order_total": float(total) / ORDER_TOTAL_UNIT,
@@ -178,15 +201,137 @@ def feature_sensitivity(art: dict, x_raw: pd.DataFrame, labels: dict) -> pd.Data
 
 
 # ----------------------------------------------------------------------------
+# Tampilan (gaya dashboard)
+# ----------------------------------------------------------------------------
+CSS = """
+<style>
+.cm-badge{border-radius:14px;padding:16px 14px;text-align:center;color:#fff;margin:6px 0 4px 0}
+.cm-badge .big{font-size:1.5rem;font-weight:800;line-height:1.25}
+.cm-badge .sub{font-size:.8rem;opacity:.92;margin-top:2px}
+.cm-h{font-weight:700;font-size:1.02rem;margin:2px 0 8px 0}
+.cm-label{font-size:.85rem;opacity:.7}
+.cm-value{font-size:1.85rem;font-weight:800;line-height:1.2;margin:2px 0 8px 0}
+.cm-bar{height:8px;border-radius:6px;background:rgba(128,128,128,.25);overflow:hidden}
+.cm-bar>div{height:100%;border-radius:6px}
+.cm-note{font-size:.78rem;opacity:.7;margin-top:6px}
+.cm-row{display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(128,128,128,.2);font-size:.9rem}
+.cm-row:last-child{border-bottom:none}
+.cm-ico{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:800;color:#fff;flex:none}
+.cm-seg{font-size:1.05rem;font-weight:800;margin-bottom:4px}
+.cm-li{font-size:.88rem;margin:3px 0}
+</style>
+"""
+
+
+def rupiah(v: float) -> str:
+    return "Rp " + f"{v:,.0f}".replace(",", ".")
+
+
+def kpi_card(label: str, value: str, pos: float = None, color: str = "", note: str = "") -> None:
+    st.markdown(
+        f'<div class="cm-label">{label}</div>'
+        f'<div class="cm-value">{value}</div>',
+        unsafe_allow_html=True,
+    )
+
+
+def decision_factors(art: dict, x_scaled: np.ndarray, cluster: int, dists: np.ndarray):
+    """
+    Fitur mana yang membuat pelanggan lebih dekat ke segmen terpilih dibanding segmen terdekat kedua.
+    Kontribusi > 0 = mendukung segmen terpilih, < 0 = condong ke segmen lain.
+    """
+    centers = art["model"].cluster_centers_
+    order = np.argsort(dists)
+    runner = int(order[1]) if int(order[0]) == cluster else int(order[0])
+    x = x_scaled[0]
+    contrib = (x - centers[runner]) ** 2 - (x - centers[cluster]) ** 2
+    df = pd.DataFrame({
+        "Fitur": [FEATURE_NAMES.get(f, f) for f in art["features"]],
+        "Kontribusi": contrib,
+    }).sort_values("Kontribusi", ascending=False)
+    return df, runner
+
+
+def donut_chart(names, values, colors, center_text) -> go.Figure:
+    fig = go.Figure(go.Pie(
+        labels=names, values=values, hole=0.66, sort=False, direction="clockwise",
+        marker=dict(colors=colors), textinfo="none",
+        hovertemplate="%{label}: %{value:.1f}%<extra></extra>",
+    ))
+    fig.update_layout(
+        height=300, margin=dict(t=10, b=10, l=10, r=10),
+        legend=dict(orientation="h", y=-0.02, x=0.5, xanchor="center"),
+        annotations=[dict(text=center_text, x=0.5, y=0.5, font_size=22, showarrow=False)],
+    )
+    return fig
+
+
+def compare_chart(art: dict, x_scaled: np.ndarray, clusters_by_label: dict) -> go.Figure:
+    centers = art["model"].cluster_centers_
+    rows = []
+    for i, f in enumerate(art["features"]):
+        nama = FEATURE_NAMES.get(f, f)
+        rows.append({"Fitur": nama, "Seri": "Pelanggan ini", "Nilai": float(np.clip(x_scaled[0][i], 0, 1))})
+        for lbl in SEGMENT_ORDER:
+            c = clusters_by_label.get(lbl)
+            if c is not None:
+                rows.append({"Fitur": nama, "Seri": lbl, "Nilai": float(centers[c][i])})
+    seri = ["Pelanggan ini", *[s for s in SEGMENT_ORDER if s in clusters_by_label]]
+    fig = px.bar(
+        pd.DataFrame(rows), x="Nilai", y="Fitur", color="Seri", orientation="h", barmode="group",
+        color_discrete_map={**SEGMENT_COLORS, "Pelanggan ini": CUSTOMER_COLOR},
+        category_orders={"Seri": seri},
+    )
+    fig.update_layout(
+        height=300, margin=dict(t=10, b=10, l=10, r=10), legend_title_text="",
+        legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"),
+        xaxis=dict(range=[0, 1.05]), yaxis_title=None,
+    )
+    return fig
+
+
+def centroid_table(art: dict, cluster_labels: dict) -> pd.DataFrame:
+    """Profil rata-rata tiap segmen dalam satuan yang mudah dibaca."""
+    c = centers_original(art)
+    out = pd.DataFrame({
+        "Frekuensi (order)": c["count_order_total"],
+        "Monetary (Rp)": c["sum_order_total"] * ORDER_TOTAL_UNIT,
+        "Recency (hari)": c["recency_days"],
+    })
+    out.index = [cluster_labels.get(i, f"Cluster {i}") for i in range(len(out))]
+    order = [s for s in SEGMENT_ORDER if s in out.index] + [i for i in out.index if i not in SEGMENT_ORDER]
+    return out.loc[order]
+
+
+def render_overview(art: dict, cluster_labels: dict, incomplete: bool = False) -> None:
+    """Tampilan awal (sebelum prediksi): ringkasan tiap segmen."""
+    prof = centroid_table(art, cluster_labels)
+    st.markdown('<div class="cm-h">Ringkasan segmen pelanggan</div>', unsafe_allow_html=True)
+    cols = st.columns(len(SEGMENT_ORDER))
+    for col, lbl in zip(cols, SEGMENT_ORDER):
+        with col, st.container(border=True):
+            color = SEGMENT_COLORS[lbl]
+            st.markdown(f'<div class="cm-seg" style="color:{color}">{lbl}</div>',
+                        unsafe_allow_html=True)
+            st.caption(CLUSTER_DESC[lbl])
+    if incomplete:
+        st.warning("Lengkapi dulu Frekuensi, Monetary, dan Recency, lalu klik **Prediksi Segmen**.")
+    else:
+        st.info("Isi data pelanggan di panel kiri lalu klik **Prediksi Segmen**.")
+
+
+# ----------------------------------------------------------------------------
 # Halaman
 # ----------------------------------------------------------------------------
 def page_simulator(art: dict = None):
+    st.markdown(CSS, unsafe_allow_html=True)
     st.title("Simulator Prediksi Segmen Pelanggan")
 
     try:
         if art is not None:
             try:
                 validate_artifact(art)
+                check_window(art)
             except ValueError:
                 art = None               # art kiriman app.py bukan model v2 -> abaikan, muat v2 sendiri
         if art is None:
@@ -196,89 +341,141 @@ def page_simulator(art: dict = None):
         st.stop()
         return
 
-    m = art.get("metrics", {})
-    info = "Model ini digunakan untuk memprediksi dan mengelompokkan segmen perilaku pelanggan berdasarkan analisis pola transaksi RFM (Recency, Frequency, Monetary)."
-    st.caption(info)
+    st.caption("Model ini digunakan untuk memprediksi dan mengelompokkan segmen perilaku pelanggan "
+               "berdasarkan analisis pola transaksi RFM (Recency, Frequency, Monetary).")
 
     feats = art["features"]
     cluster_labels = art["cluster_labels"]
+    clusters_by_label = {lbl: c_id for c_id, lbl in cluster_labels.items()}
     snap = pd.Timestamp(art["preprocess"]["snapshot_date"])
+    W = int(art["preprocess"]["window_days"])
+    wstart = art["preprocess"].get("window_start")
+    wstart = pd.Timestamp(wstart) if wstart is not None else snap - pd.Timedelta(days=W - 1)
     dmin, dmax = feature_ranges(art)
+    sig = hash(art["model"].cluster_centers_.tobytes())
 
-    col_in, col_out = st.columns([1, 1.2], gap="large")
+    col_left, col_main = st.columns([1, 2.6], gap="large")
 
-    with col_in:
-        st.subheader("Input Data Pelanggan")
+    # ---------------- Panel kiri: input ----------------
+    with col_left:
+        with st.container(border=True):
+            st.markdown('<div class="cm-h">Input Data Pelanggan</div>', unsafe_allow_html=True)
+            with st.form("sim_form", border=False):
+                count = st.number_input(
+                    f"Frekuensi: berapa kali memesan dalam {W} hari terakhir?",
+                    min_value=1,
+                    value=None,
+                    placeholder="5",
+                    step=1,
+                    help=f"Rentang data training: {dmin['count_order_total']:.0f} – {dmax['count_order_total']:.0f}",
+                )
+                total = st.number_input(
+                    f"Monetary: total belanja dalam {W} hari terakhir (Rp)",
+                    min_value=0.0,
+                    value=None,
+                    placeholder="150000",
+                    step=10000.0,
+                    format="%.0f",
+                    help=("Rentang data training: "
+                          f"{rupiah(dmin['sum_order_total'] * ORDER_TOTAL_UNIT)} – "
+                          f"{rupiah(dmax['sum_order_total'] * ORDER_TOTAL_UNIT)}"),
+                )
+                recency = st.number_input(
+                    f"Recency: berapa hari sejak order terakhir? (1–{W})",
+                    min_value=1,
+                    max_value=W,
+                    value=None,
+                    placeholder=f"1 - 30",
+                    step=1,
+                    help=f"1 = order terakhir pada hari acuan, {W} = order terakhir di hari pertama jendela.",
+                )
+                st.caption(f"Semua isian dihitung dalam jendela {W} hari terakhir")
+                submitted = st.form_submit_button("Prediksi Segmen", type="primary", width="stretch")
 
-        days_since = None
-        with st.form("sim_form"):
-            count = st.number_input(
-                "Frekuensi: berapa kali pelanggan ini memesan sejauh ini?",
-                min_value=1,
-                value=None,
-                placeholder="Masukkan jumlah order (misal: 5)",
-                step=1,
-                help=f"Rentang data training: {dmin['count_order_total']:.0f} – {dmax['count_order_total']:.0f}",
-            )
-            total = st.number_input(
-                "Monetary: total akumulasi belanja pelanggan ini (Rp)",
-                min_value=0.0,
-                value=None,
-                placeholder="Masukkan nominal belanja (misal: 150000)",
-                step=10000.0,
-                format="%.0f",
-                help=(
-                    "Rentang data training: Rp "
-                    f"{dmin['sum_order_total'] * ORDER_TOTAL_UNIT:,.0f} – "
-                    f"Rp {dmax['sum_order_total'] * ORDER_TOTAL_UNIT:,.0f}"
-                ),
-            )
-            last_date = st.date_input(
-                "Recency: tanggal order terakhir",
-                value=snap.date())
-                
-            submitted = st.form_submit_button("Prediksi Segmen", type="primary", width="stretch")
+    incomplete = False
+    if submitted:
+        if count is None or total is None or recency is None:
+            incomplete = True
+            st.session_state.pop("sim_result", None)
+        else:
+            cluster, dists, x_raw, x_scaled = predict(art, total, count, None, int(recency))
+            st.session_state["sim_result"] = {
+                "sig": sig, "cluster": cluster, "dists": dists, "x_raw": x_raw, "x_scaled": x_scaled,
+            }
+    res = st.session_state.get("sim_result")
+    if res is not None and res["sig"] != sig:
+        res = None                        # model diganti -> hasil lama tidak berlaku
 
-    with col_out:
-        st.subheader("Hasil Prediksi")
-        if not submitted:
-            st.info("Isi data di sebelah kiri lalu klik **Prediksi Segmen**.")
-            return
-
-        cluster, dists, x_raw, x_scaled = predict(art, total, count, last_date, days_since)
-
+    # ---------------- Panel kiri: hasil ringkas ----------------
+    if res is not None:
+        cluster, dists, x_raw, x_scaled = res["cluster"], res["dists"], res["x_raw"], res["x_scaled"]
         label = cluster_labels.get(cluster, f"Cluster {cluster}")
-        st.success(f"{CLUSTER_ICONS.get(label, '')} **{label}**  (cluster {cluster})")
-        st.write(CLUSTER_DESC.get(label, ""))
-
+        color = SEGMENT_COLORS.get(label, "#64748b")
         inv = 1.0 / (dists + 1e-9)
         closeness = inv / inv.sum()
-        clusters_by_label = {lbl: c_id for c_id, lbl in cluster_labels.items()}
+        runner = decision_factors(art, x_scaled, cluster, dists)
 
-        cols = st.columns(len(SEGMENT_ORDER))
-        for col, lbl in zip(cols, SEGMENT_ORDER):
-            c = clusters_by_label.get(lbl)
-            if c is None:
-                col.metric(lbl, "-")
-                continue
-            col.metric(lbl, f"{closeness[c] * 100:.1f}%",
-                       help=f"Jarak ke centroid cluster {c}: {dists[c]:.4f}")
+        with col_left:
+            with st.container(border=True):
+                st.markdown('<div class="cm-h">Hasil Prediksi</div>', unsafe_allow_html=True)
+                st.markdown(
+                    f'<div class="cm-badge" style="background:{color}">'
+                    f'<div class="big">{label}</div>'
+                    f'<div class="sub">kemiripan {closeness[cluster] * 100:.1f}% · cluster {cluster}</div></div>',
+                    unsafe_allow_html=True,
+                )
 
-        chart_data = [
-            {"Segmen": lbl, "Kemiripan (%)": closeness[clusters_by_label[lbl]] * 100.0}
-            for lbl in SEGMENT_ORDER if lbl in clusters_by_label
-        ]
-        st.bar_chart(pd.DataFrame(chart_data).set_index("Segmen"))
+    # ---------------- Panel utama ----------------
+    with col_main:
+        if res is None:
+            render_overview(art, cluster_labels, incomplete)
+        else:
+            eps = 1e-9
+            out_of_range = [
+                FEATURE_NAMES.get(f, f)
+                for f, v in zip(feats, x_raw.iloc[0])
+                if v < dmin[f] - eps or v > dmax[f] + eps
+            ]
+            if out_of_range:
+                st.warning("Nilai berikut berada di luar rentang data training, hasil prediksi "
+                           "kurang dapat diandalkan: " + ", ".join(out_of_range))
 
-        eps = 1e-9
-        out_of_range = [
-            FEATURE_NAMES.get(f, f)
-            for f, v in zip(feats, x_raw.iloc[0])
-            if v < dmin[f] - eps or v > dmax[f] + eps
-        ]
-        if out_of_range:
-            st.warning("Nilai berikut berada di luar rentang data training, hasil prediksi "
-                       "kurang dapat diandalkan: " + ", ".join(out_of_range))
+            prof = centroid_table(art, cluster_labels)
+            seg = prof.loc[label] if label in prof.index else None
+            xs = dict(zip(feats, x_scaled[0]))
+
+            k1, k2, k3 = st.columns(3)
+            with k1, st.container(border=True):
+                kpi_card("Frekuensi", f"{x_raw['count_order_total'].iloc[0]:,.0f} order",
+                         None, color,"")
+            with k2, st.container(border=True):
+                kpi_card("Monetary", rupiah(x_raw["sum_order_total"].iloc[0] * ORDER_TOTAL_UNIT),
+                         None, color, "")
+            with k3, st.container(border=True):
+                kpi_card("Recency", f"{x_raw['recency_days'].iloc[0]:,.0f} hari",
+                         None, color, "")
+
+            g1, g2 = st.columns([1, 1.25])
+            with g1, st.container(border=True):
+                st.markdown('<div class="cm-h">Kedekatan ke tiap segmen</div>', unsafe_allow_html=True)
+                names = [s for s in SEGMENT_ORDER if s in clusters_by_label]
+                vals = [closeness[clusters_by_label[s]] * 100 for s in names]
+                st.plotly_chart(
+                    donut_chart(names, vals, [SEGMENT_COLORS[s] for s in names],
+                                f"{closeness[cluster] * 100:.0f}%"),
+                    width="stretch",
+                )
+            with g2, st.container(border=True):
+                st.markdown('<div class="cm-h">Posisi pelanggan dibanding rata-rata segmen</div>',
+                            unsafe_allow_html=True)
+                st.plotly_chart(compare_chart(art, x_scaled, clusters_by_label), width="stretch")
+
+            with st.container(border=True):
+                st.markdown('<div class="cm-h">Rekomendasi tindakan</div>', unsafe_allow_html=True)
+                st.write(CLUSTER_DESC.get(label, ""))
+                st.markdown("".join(f'<div class="cm-li">• {a}</div>' for a in SEGMENT_ACTIONS.get(label, [])),
+                            unsafe_allow_html=True)
+
 
 if __name__ == "__main__":               # dijalankan langsung: streamlit run prediksi.py
     st.set_page_config(page_title="Simulator Prediksi", page_icon="🔮", layout="wide")

@@ -1,6 +1,4 @@
-__pycache__/
-*.py[cod]
-
 Data/
 
-Model/*.pkl
+Model/kmeans_model.pkl
+Model/scaler.pkl
