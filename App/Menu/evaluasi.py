@@ -30,6 +30,8 @@ FEATURE_NAMES = {
     "recency_days": "Recency (hari sejak order terakhir)",
 }
 
+CHART_CONFIG = {"displayModeBar": False}
+
 
 # ----------------------------------------------------------------------------
 # Memuat model
@@ -381,7 +383,7 @@ def page_evaluasi(art: dict = None):
                          color_discrete_map=SEGMEN_COLORS, text="Jumlah")
             fig.update_traces(marker_line_width=0, textposition="outside")
             fig.update_layout(showlegend=False, margin=dict(t=10, b=10), bargap=0.35, xaxis_title=None)
-            st.plotly_chart(style_fig(fig, 320), width="stretch")
+            st.plotly_chart(style_fig(fig, 320), width="stretch", config=CHART_CONFIG)
         with right, st.container(border=True, key="cmcard_persegmen"):
             if "silhouette" in result.columns:
                 section("Silhouette & jarak ke centroid per segmen")

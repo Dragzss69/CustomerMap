@@ -38,6 +38,12 @@ FEATURE_NAMES = {
     "recency_days": "Recency (hari sejak order terakhir)",
 }
 
+SHORT_NAMES = {
+    "sum_order_total": "Belanja",
+    "count_order_total": "Order",
+    "recency_days": "Recency",
+}
+
 SEGMENT_ORDER = ("Pelanggan Loyal", "Pelanggan Reguler", "Pelanggan Pasif")
 
 SEGMENT_ACTIONS = {
@@ -48,7 +54,9 @@ SEGMENT_ACTIONS = {
     "Pelanggan Pasif": ["Kirim voucher comeback", "Kirim notifikasi personal (push atau WhatsApp)",
                         "Lakukan survei alasan berhenti"],
 }
- CHART_CONFIG = {"displayModeBar": False}
+
+CHART_CONFIG = {"displayModeBar": False}
+
 
 # ----------------------------------------------------------------------------
 # Memuat model
@@ -244,13 +252,6 @@ def donut_chart(names, values, colors, center_text) -> go.Figure:
     return style_fig(fig, 310)
 
 
-SHORT_NAMES = {
-    "sum_order_total": "Belanja",
-    "count_order_total": "Order",
-    "recency_days": "Recency",
-}
-
-
 def compare_chart(art: dict, x_scaled: np.ndarray, clusters_by_label: dict) -> go.Figure:
     centers = art["model"].cluster_centers_
     rows = []
@@ -289,6 +290,7 @@ def compare_legend(clusters_by_label: dict) -> None:
         for n, c in items
     )
     st.markdown(f'<div style="margin:0 0 6px 2px">{html}</div>', unsafe_allow_html=True)
+
 
 def centroid_table(art: dict, cluster_labels: dict) -> pd.DataFrame:
     """Profil rata-rata tiap segmen dalam satuan yang mudah dibaca."""
