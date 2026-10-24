@@ -12,11 +12,11 @@ import streamlit as st
 # Palet
 # ----------------------------------------------------------------------------
 SEGMENT_COLORS = {
-    "Pelanggan Loyal": "#34d399",     # hijau zamrud
-    "Pelanggan Reguler": "#60a5fa",   # biru langit
-    "Pelanggan Pasif": "#fb7185",     # merah muda
+    "Pelanggan Loyal": "#10b981",
+    "Pelanggan Reguler": "#3b82f6",
+    "Pelanggan Pasif": "#f43f5e",
 }
-CUSTOMER_COLOR = "#fbbf24"            # kuning: "pelanggan ini" di grafik
+CUSTOMER_COLOR = "#f59e0b"
 
 CSS = """
 <style>
@@ -214,6 +214,89 @@ div[class*="st-key-cmcard"] {background: var(--cx-glass); border: 1px solid var(
 @media (max-width: 760px) {
   .cx-hero {padding: 24px 22px;} .cx-title {font-size: 1.7rem;} .cx-rfm {display: none;}
 }
+
+/* ================= TEMA TERANG (override) ================= */
+:root {
+  --cx-text: #0f172a; --cx-muted: #64748b; --cx-faint: #94a3b8;
+  --cx-line: rgba(15,23,42,.09); --cx-glass: #ffffff;
+}
+.stApp {
+  color: var(--cx-text);
+  background:
+    radial-gradient(900px 520px at 8% -10%, rgba(99,102,241,.10), transparent 60%),
+    radial-gradient(760px 460px at 100% 0%, rgba(34,211,238,.10), transparent 60%),
+    #f6f8fc;
+  background-attachment: fixed;
+}
+.stApp h1, .stApp h2, .stApp h3, .stApp h4 {color: #0f172a;}
+::-webkit-scrollbar-thumb {background: rgba(15,23,42,.18);}
+
+/* Hero: tetap berwarna agar jadi aksen utama */
+.cx-hero {
+  background:
+    linear-gradient(rgba(255,255,255,.06) 1px, transparent 1px) 0 0 / 34px 34px,
+    linear-gradient(90deg, rgba(255,255,255,.06) 1px, transparent 1px) 0 0 / 34px 34px,
+    linear-gradient(135deg, #4f46e5 0%, #0ea5e9 60%, #8b5cf6 100%);
+  border: none; box-shadow: 0 18px 44px rgba(79,70,229,.28);}
+.cx-title {background: none; -webkit-background-clip: initial; background-clip: initial; color: #fff;}
+.cx-sub {color: rgba(255,255,255,.88);}
+
+/* Kartu */
+div[class*="st-key-cmcard"] {background: #fff; border: 1px solid var(--cx-line) !important;
+  box-shadow: 0 10px 30px rgba(15,23,42,.06); backdrop-filter: none;}
+.cx-sec-t {color: #0f172a;}
+
+/* KPI */
+.cx-kpi {background: #fff; box-shadow: 0 10px 30px rgba(15,23,42,.06);}
+.cx-kpi-val {color: #0f172a;}
+.cx-kpi-ico {box-shadow: 0 4px 12px color-mix(in srgb, var(--c) 45%, transparent);}
+.cx-bar {background: rgba(15,23,42,.08);}
+.cx-bar > i {background: linear-gradient(90deg, color-mix(in srgb, var(--c) 45%, #fff), var(--c));}
+
+/* Hasil prediksi */
+.cx-result {background: #fff; box-shadow: 0 10px 30px color-mix(in srgb, var(--c) 22%, transparent);}
+.cx-ring {background: conic-gradient(var(--c) calc(var(--p) * 1%), rgba(15,23,42,.10) 0);}
+.cx-ring::before {background: #fff;}
+.cx-ring b, .cx-res-name {color: #0f172a;}
+.cx-res-sub {color: #64748b;}
+
+/* Kartu segmen */
+.cx-seg {background: #fff; box-shadow: 0 10px 30px rgba(15,23,42,.06); backdrop-filter: none;}
+.cx-seg::after {opacity: .10;}
+.cx-seg:hover {box-shadow: 0 16px 36px rgba(15,23,42,.12);}
+.cx-seg-name {color: #0f172a;}
+.cx-seg-name::before {box-shadow: 0 0 10px color-mix(in srgb, var(--c) 60%, transparent);}
+.cx-seg-desc {color: #475569;}
+.cx-tile {background: #f1f5f9;}
+.cx-tile b {color: #0f172a;}
+
+/* Langkah */
+.cx-step {background: #fff; box-shadow: 0 6px 18px rgba(15,23,42,.05);}
+.cx-step b {color: #0f172a;}
+.cx-step span {color: #64748b;}
+.cx-num {box-shadow: 0 4px 12px rgba(99,102,241,.30);}
+
+/* Rekomendasi */
+.cx-rec-desc {color: #334155;}
+.cx-act {color: #1e293b; background: #f8fafc;}
+.cx-act i {color: #fff;}
+
+/* Input, tombol, tab, tabel */
+[data-testid="stNumberInput"] [data-baseweb="input"] {background: #f8fafc; border: 1px solid rgba(15,23,42,.14);}
+[data-testid="stNumberInput"] input {color: #0f172a;}
+[data-testid="stNumberInput"] [data-baseweb="input"]:focus-within {border-color: #6366f1; box-shadow: 0 0 0 3px rgba(99,102,241,.18);}
+[data-baseweb="select"] > div {background: #f8fafc; border-color: rgba(15,23,42,.14);}
+[data-testid="stBaseButton-primaryFormSubmit"], [data-testid="stBaseButton-primary"] {
+  background: linear-gradient(135deg, #4f46e5, #0ea5e9); box-shadow: 0 8px 20px rgba(79,70,229,.30);}
+[data-testid="stBaseButton-secondary"], [data-testid="stDownloadButton"] button {background: #fff; color: #0f172a; border: 1px solid rgba(15,23,42,.14);}
+[data-testid="stBaseButton-secondary"]:hover, [data-testid="stDownloadButton"] button:hover {border-color: #6366f1; color: #4f46e5;}
+[data-testid="stFileUploaderDropzone"] {background: rgba(99,102,241,.04); border-color: rgba(99,102,241,.45);}
+[data-testid="stAlert"] {background: #eff6ff; border-color: rgba(59,130,246,.25);}
+[data-testid="stDataFrame"] {background: #fff;}
+[data-baseweb="tab-list"] {background: #fff;}
+.stTabs [aria-selected="true"] {background: linear-gradient(135deg, rgba(99,102,241,.14), rgba(14,165,233,.14)); color: #4f46e5;}
+[data-testid="stMetric"] {background: #fff; box-shadow: 0 8px 22px rgba(15,23,42,.05);}
+[data-testid="stMetricValue"] {color: #0f172a;}
 </style>
 """
 
@@ -329,16 +412,15 @@ def status_chip(text: str) -> None:
 
 
 def style_fig(fig, height: int | None = None):
-    """Samakan grafik Plotly dengan tema gelap (latar transparan agar menyatu dengan kartu)."""
     fig.update_layout(
-        template="plotly_dark",
+        template="plotly_white",
         paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        font=dict(family="Inter, sans-serif", color="#cbd5e1", size=12),
-        legend=dict(font=dict(color="#cbd5e1")),
-        hoverlabel=dict(bgcolor="#0f172a", bordercolor="rgba(255,255,255,.18)", font=dict(color="#e8edff")),
+        font=dict(family="Inter, sans-serif", color="#334155", size=12),
+        legend=dict(font=dict(color="#334155")),
+        hoverlabel=dict(bgcolor="#ffffff", bordercolor="rgba(15,23,42,.15)", font=dict(color="#0f172a")),
     )
-    fig.update_xaxes(gridcolor="rgba(255,255,255,.07)", zerolinecolor="rgba(255,255,255,.12)", linecolor="rgba(255,255,255,.12)")
-    fig.update_yaxes(gridcolor="rgba(255,255,255,.07)", zerolinecolor="rgba(255,255,255,.12)", linecolor="rgba(255,255,255,.12)")
+    fig.update_xaxes(gridcolor="rgba(15,23,42,.07)", zerolinecolor="rgba(15,23,42,.12)", linecolor="rgba(15,23,42,.12)")
+    fig.update_yaxes(gridcolor="rgba(15,23,42,.07)", zerolinecolor="rgba(15,23,42,.12)", linecolor="rgba(15,23,42,.12)")
     if height:
         fig.update_layout(height=height)
     return fig

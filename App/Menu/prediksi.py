@@ -241,13 +241,13 @@ def decision_factors(art: dict, x_scaled: np.ndarray, cluster: int, dists: np.nd
 def donut_chart(names, values, colors, center_text) -> go.Figure:
     fig = go.Figure(go.Pie(
         labels=names, values=values, hole=0.7, sort=False, direction="clockwise",
-        marker=dict(colors=colors, line=dict(color="#0b1226", width=3)), textinfo="none",
+        marker=dict(colors=colors, line=dict(color="#ffffff", width=3)), textinfo="none",
         hovertemplate="%{label}: %{value:.1f}%<extra></extra>",
     ))
     fig.update_layout(
         margin=dict(t=10, b=10, l=10, r=10),
         legend=dict(orientation="h", y=-0.02, x=0.5, xanchor="center"),
-        annotations=[dict(text=f"<b>{center_text}</b>", x=0.5, y=0.5, font=dict(size=30, color="#ffffff"), showarrow=False)],
+        annotations=[dict(text=f"<b>{center_text}</b>", x=0.5, y=0.5, font=dict(size=30, color="#0f172a"), showarrow=False)],
     )
     return style_fig(fig, 310)
 

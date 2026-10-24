@@ -1,6 +1,5 @@
 import io
 import pickle
-import sys
 from pathlib import Path
 
 import numpy as np
@@ -12,10 +11,6 @@ from sklearn.decomposition import PCA
 from sklearn.metrics import davies_bouldin_score, silhouette_samples
 from sklearn.neighbors import NearestNeighbors
 from sklearn.preprocessing import MinMaxScaler
-
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # supaya cm_style ketemu saat dijalankan langsung
-from cm_style import (SEGMENT_COLORS as SEGMEN_COLORS, empty_state, hero, inject, section,  # noqa: E402
-                      status_chip, style_fig)
 
 # ----------------------------------------------------------------------------
 # Konstanta
@@ -29,8 +24,76 @@ FEATURE_NAMES = {
     "count_order_total": "Jumlah Order",
     "recency_days": "Recency (hari sejak order terakhir)",
 }
+SEGMEN_COLORS = {
+    "Pelanggan Loyal": "#3b82f6",
+    "Pelanggan Reguler": "#2e9e5b",
+    "Pelanggan Pasif": "#f59e0b",
+}
 
-CHART_CONFIG = {"displayModeBar": False}
+# ----------------------------------------------------------------------------
+# Gaya tampilan (tombol, droplist, kartu, tab)
+# ----------------------------------------------------------------------------
+# Warna border tiap kartu. Key kartu = st-key-<nama> pada CSS di bawah.
+CARD_COLORS = {
+    "kpi_rows": "#3b82f6",    # biru
+    "kpi_cust": "#8b5cf6",    # ungu
+    "kpi_out": "#ef4444",     # merah
+    "kpi_ok": "#2e9e5b",      # hijau
+    "met_sil": "#3b82f6",
+    "met_dbi": "#8b5cf6",
+    "met_avg": "#f59e0b",     # kuning
+    "met_inertia": "#14b8a6", # teal
+}
+ACCENT = "#3b82f6"
+ACCENT_DARK = "#1d4ed8"
+
+_card_css = "\n".join(
+    f".st-key-{k}{{border:2px solid {c} !important;border-radius:14px !important;"
+    f"background:{c}14 !important;padding:6px 10px !important}}"
+    for k, c in CARD_COLORS.items()
+)
+
+CSS = f"""
+<style>
+/* ---------- Tab: lebih besar, berwarna saat dipilih ---------- */
+.stTabs [data-baseweb="tab-list"]{{gap:10px;padding-bottom:4px}}
+.stTabs [data-baseweb="tab"]{{height:auto;padding:14px 30px;border-radius:12px 12px 0 0;
+    background:{ACCENT}1a;border:2px solid {ACCENT}59;border-bottom:none;transition:.15s}}
+.stTabs [data-baseweb="tab"] p{{font-size:1.3rem;font-weight:700;margin:0}}
+.stTabs [data-baseweb="tab"]:hover{{background:{ACCENT}38}}
+.stTabs [aria-selected="true"]{{background:{ACCENT} !important;border-color:{ACCENT} !important}}
+.stTabs [aria-selected="true"] p{{color:#ffffff !important}}
+.stTabs [data-baseweb="tab-highlight"]{{background-color:{ACCENT_DARK} !important;height:4px}}
+.stTabs [data-baseweb="tab-border"]{{background-color:{ACCENT}59}}
+
+/* ---------- Tombol ---------- */
+.stButton button,.stDownloadButton button,[data-testid="stFileUploaderDropzone"] button{{
+    border-radius:10px;border:2px solid {ACCENT};background:{ACCENT};color:#ffffff;
+    font-weight:700;padding:.55rem 1.2rem;transition:.15s}}
+.stButton button p,.stDownloadButton button p,[data-testid="stFileUploaderDropzone"] button p{{color:#ffffff}}
+.stButton button:hover,.stDownloadButton button:hover,[data-testid="stFileUploaderDropzone"] button:hover{{
+    background:{ACCENT_DARK};border-color:{ACCENT_DARK};color:#ffffff;
+    transform:translateY(-1px);box-shadow:0 4px 12px {ACCENT}59}}
+.stButton button:active,.stDownloadButton button:active{{transform:none;box-shadow:none}}
+.st-key-btn_reupload button{{background:#f59e0b;border-color:#f59e0b}}
+.st-key-btn_reupload button:hover{{background:#d97706;border-color:#d97706;box-shadow:0 4px 12px #f59e0b59}}
+.st-key-btn_download button{{background:#2e9e5b;border-color:#2e9e5b}}
+.st-key-btn_download button:hover{{background:#237a46;border-color:#237a46;box-shadow:0 4px 12px #2e9e5b59}}
+[data-testid="stFileUploaderDropzone"]{{border:2px dashed {ACCENT};border-radius:12px;background:{ACCENT}0d}}
+
+/* ---------- Droplist (selectbox) ---------- */
+[data-testid="stSelectbox"] label p{{font-weight:700}}
+div[data-baseweb="select"]>div{{border:2px solid {ACCENT} !important;border-radius:10px !important;
+    background:{ACCENT}0f !important;transition:.15s}}
+div[data-baseweb="select"]>div:hover{{border-color:{ACCENT_DARK} !important}}
+div[data-baseweb="select"]>div:focus-within{{box-shadow:0 0 0 3px {ACCENT}59}}
+[data-baseweb="popover"] li[role="option"]:hover{{background:{ACCENT}2e !important}}
+[data-baseweb="popover"] li[aria-selected="true"]{{background:{ACCENT}47 !important;font-weight:700}}
+
+/* ---------- Kartu metrik (border berwarna) ---------- */
+{_card_css}
+</style>
+"""
 
 
 # ----------------------------------------------------------------------------
@@ -82,19 +145,32 @@ def load_model_artifact(filename: str = MODEL_FILENAME) -> dict:
 # Preprocessing (sama dengan training_v2.py)
 # ----------------------------------------------------------------------------
 def build_features(raw: pd.DataFrame, art: dict) -> pd.DataFrame:
-    """Aggregate per customer + recency terhadap tanggal acuan training."""
+    """Filter jendela RFM + aggregate per customer + recency (sama dengan training_v2.py)."""
     df = raw[REQUIRED_COLS].copy()
     df["order_date"] = pd.to_datetime(df["order_date"], errors="coerce")
     df["order_total"] = pd.to_numeric(df["order_total"], errors="coerce")
     df = df.dropna(subset=REQUIRED_COLS)
 
-    snapshot = pd.Timestamp(art["preprocess"]["snapshot_date"])
+    pre = art["preprocess"]
+    snapshot = pd.Timestamp(pre["snapshot_date"])
+    window = pre.get("window_days")
+    end_excl = snapshot + pd.Timedelta(days=1)
+    if window:                               # jendela RFM bulanan: hanya order dalam N hari terakhir
+        start = snapshot - pd.Timedelta(days=int(window) - 1)
+        df = df[(df["order_date"] >= start) & (df["order_date"] < end_excl)]
+        if df.empty:
+            raise ValueError(f"Tidak ada order pada jendela {start:%d-%m-%Y} s/d {snapshot:%d-%m-%Y}. "
+                             "Pastikan dataset memuat order pada periode tersebut.")
+
     agg = df.groupby("customer_id").agg(
         sum_order_total=("order_total", "sum"),
         count_order_total=("order_total", "count"),
         last_order=("order_date", "max"),
     )
-    agg["recency_days"] = (snapshot - agg["last_order"]).dt.total_seconds() / 86400.0
+    if window:   # 1 = order terakhir di hari acuan ... window = hari pertama jendela
+        agg["recency_days"] = np.ceil((end_excl - agg["last_order"]).dt.total_seconds() / 86400.0)
+    else:
+        agg["recency_days"] = (snapshot - agg["last_order"]).dt.total_seconds() / 86400.0
     return agg[art["features"]]
 
 
@@ -220,10 +296,8 @@ def feature_influence(art: dict) -> pd.DataFrame:
 # Tampilan halaman
 # ----------------------------------------------------------------------------
 def page_evaluasi(art: dict = None):
-    inject()
-    hero("Evaluasi Model K-Means",
-         "Unggah dataset order untuk melihat hasil clustering dan kualitas model.",
-         ["Silhouette", "Davies-Bouldin", "Scatter plot"])
+    st.markdown(CSS, unsafe_allow_html=True)
+    st.title("Evaluasi Model K-Means")
 
     try:
         if art is not None:
@@ -253,13 +327,11 @@ def page_evaluasi(art: dict = None):
 
     # 1. Tampilkan form unggah HANYA jika data belum diproses
     if st.session_state.eval_out is None:
-        with st.container(border=True, key="cmcard_upload"):
-            empty_state("CSV", "Unggah dataset order",
-                        "Data diproses dengan model dan scaler dari kmeans_model_v2.pkl. "
-                        "File CSV harus memiliki kolom berikut:", REQUIRED_COLS)
-            up = st.file_uploader("Unggah dataset (CSV)", type=["csv"], label_visibility="collapsed")
+        st.caption("Unggah dataset order, lalu data diproses dengan model dan scaler dari kmeans_model_v2.pkl.")
+        up = st.file_uploader("Unggah dataset (CSV)", type=["csv"])
 
         if up is None:
+            st.info("Unggah dataset untuk memulai evaluasi.")
             return
 
         try:
@@ -275,27 +347,30 @@ def page_evaluasi(art: dict = None):
     out = st.session_state.eval_out
 
     # (Opsional) Tombol untuk mengganti / unggah ulang dataset jika dibutuhkan
-    result, m = out["result"], out["metrics"]
-    col_info, col_btn = st.columns([4, 1], vertical_alignment="center")
-    with col_info:
-        status_chip(f"Dataset diproses · {m['n_customers']:,} customer")
+    col_info, col_btn = st.columns([4, 1])
     with col_btn:
-        if st.button("Unggah ulang", icon=":material/refresh:", width="stretch"):
+        if st.button("Unggah Ulang", width="stretch", key="btn_reupload"):
             st.session_state.eval_out = None
             st.rerun()
 
+    result, m = out["result"], out["metrics"]
+
     # 3. Tampilkan tab hasil dataset dan metrik evaluasi
-    tab_data, tab_metric = st.tabs([":material/table_view: Hasil Dataset", ":material/monitoring: Metrik Evaluasi"])
+    tab_data, tab_metric = st.tabs(["Hasil Dataset", "Metrik Evaluasi"])
 
     # ---------------- Tab 1: hasil dataset ----------------
     with tab_data:
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Baris order", f"{m['n_rows']:,}")
-        c2.metric("Jumlah customer", f"{m['n_customers']:,}")
-        c3.metric("Outlier dibuang", f"{m['n_outliers']:,}")
-        c4.metric("Customer dianalisis", f"{m['n_analyzed']:,}")
+        with c1, st.container(border=True, key="kpi_rows"):
+            st.metric("Baris order", f"{m['n_rows']:,}")
+        with c2, st.container(border=True, key="kpi_cust"):
+            st.metric("Jumlah customer", f"{m['n_customers']:,}")
+        with c3, st.container(border=True, key="kpi_out"):
+            st.metric("Outlier dibuang", f"{m['n_outliers']:,}")
+        with c4, st.container(border=True, key="kpi_ok"):
+            st.metric("Customer dianalisis", f"{m['n_analyzed']:,}")
 
-        section("Hasil clustering per customer")
+        st.subheader("Hasil clustering per customer")
         show_cols = features + ["cluster", "Segmen", "jarak_ke_centroid"]
         view = result[show_cols].rename(columns=FEATURE_NAMES)
         st.dataframe(view.style.format({
@@ -309,7 +384,7 @@ def page_evaluasi(art: dict = None):
             result[show_cols].to_csv().encode("utf-8"),
             file_name="hasil_clustering_v2.csv",
             mime="text/csv",
-            icon=":material/download:",
+            key="btn_download",
         )
 
         names = [FEATURE_NAMES[f] for f in features]
@@ -322,7 +397,7 @@ def page_evaluasi(art: dict = None):
         plot_df["customer_id"] = result.index.astype(str)
         ctr_labels = [cluster_labels.get(i, f"Cluster {i}") for i in range(len(ctr))]
 
-        section("Scatter plot clustering", "tiap titik = satu customer")
+        st.subheader("Scatter plot clustering")
         c1, c2 = st.columns(2)
         with c1:
             x_name = st.selectbox("Sumbu X", names, index=1)
@@ -346,12 +421,12 @@ def page_evaluasi(art: dict = None):
             text=ctr_labels,
             textposition="top center",
             name="Centroid",
-            marker=dict(symbol="x", size=16, color="#ffffff", line=dict(width=2, color="#ffffff")),
+            marker=dict(symbol="x", size=16, color="black", line=dict(width=2)),
         ))
 
-        fig.update_layout(margin=dict(t=20, b=10), legend_title_text="")
-        st.plotly_chart(style_fig(fig, 560), width="stretch")
-        st.caption("Tanda ✕ putih adalah centroid tiap cluster (dalam skala ternormalisasi 0–1).")
+        fig.update_layout(height=560, margin=dict(t=20, b=10), legend_title_text="")
+        st.plotly_chart(fig, width="stretch")
+        st.caption("Tanda ✕ hitam adalah centroid tiap cluster (dalam skala ternormalisasi 0–1).")
 
     # ---------------- Tab 2: metrik ----------------
     with tab_metric:
@@ -363,30 +438,28 @@ def page_evaluasi(art: dict = None):
             st.warning("Silhouette dan Davies-Bouldin tidak dapat dihitung karena data hanya "
                        "masuk ke satu cluster atau terlalu sedikit.")
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Silhouette Score",
-                  "-" if m["silhouette"] is None else f"{m['silhouette']:.4f}",
-                  help="Semakin mendekati 1, cluster semakin terpisah dengan baik.")
-        c2.metric("Davies-Bouldin Index (DBI)",
-                  "-" if m["davies_bouldin"] is None else f"{m['davies_bouldin']:.4f}",
-                  help="Semakin kecil semakin baik (cluster kompak dan saling berjauhan).")
-        c3.metric("Avg. within centroid distance", f"{m['avg_within']:.4f}",
-                  help="Rata-rata jarak customer ke centroid segmennya.")
-        c4.metric("Inertia (SSE)", f"{m['inertia']:.4f}",
-                  help="Jumlah kuadrat jarak ke centroid; semakin kecil semakin rapat.")
-        st.write("")
+        with c1, st.container(border=True, key="met_sil"):
+            st.metric("Silhouette Score",
+                      "-" if m["silhouette"] is None else f"{m['silhouette']:.4f}")
+        with c2, st.container(border=True, key="met_dbi"):
+            st.metric("Davies-Bouldin Index (DBI)",
+                      "-" if m["davies_bouldin"] is None else f"{m['davies_bouldin']:.4f}")
+        with c3, st.container(border=True, key="met_avg"):
+            st.metric("Avg. within centroid distance", f"{m['avg_within']:.4f}")
+        with c4, st.container(border=True, key="met_inertia"):
+            st.metric("Inertia (SSE)", f"{m['inertia']:.4f}")
 
         left, right = st.columns(2)
-        with left, st.container(border=True, key="cmcard_dist"):
-            section("Distribusi customer per segmen")
+        with left:
+            st.markdown("**Distribusi customer per segmen**")
             dist_df = result["Segmen"].value_counts().rename_axis("Segmen").reset_index(name="Jumlah")
             fig = px.bar(dist_df, x="Segmen", y="Jumlah", color="Segmen",
                          color_discrete_map=SEGMEN_COLORS, text="Jumlah")
-            fig.update_traces(marker_line_width=0, textposition="outside")
-            fig.update_layout(showlegend=False, margin=dict(t=10, b=10), bargap=0.35, xaxis_title=None)
-            st.plotly_chart(style_fig(fig, 320), width="stretch", config=CHART_CONFIG)
-        with right, st.container(border=True, key="cmcard_persegmen"):
+            fig.update_layout(showlegend=False, margin=dict(t=10, b=10))
+            st.plotly_chart(fig, width="stretch")
+        with right:
             if "silhouette" in result.columns:
-                section("Silhouette & jarak ke centroid per segmen")
+                st.markdown("**Rata-rata silhouette & jarak ke centroid per segmen**")
                 per = result.groupby("Segmen").agg(
                     Silhouette=("silhouette", "mean"),
                     Jarak_ke_centroid=("jarak_ke_centroid", "mean"),
@@ -395,15 +468,14 @@ def page_evaluasi(art: dict = None):
                 st.dataframe(per.style.format({"Silhouette": "{:.4f}", "Jarak_ke_centroid": "{:.4f}"}),
                              width="stretch")
 
-        with st.container(border=True, key="cmcard_infl"):
-            section("Pengaruh tiap fitur terhadap pembagian cluster", "dari centroid model")
-            infl = feature_influence(art)
-            st.dataframe(infl.style.format({"Selisih antar centroid (0-1)": "{:.3f}",
-                                            "Pengaruh (%)": "{:.1f}"}), width="stretch")
-            st.caption("Pengaruh yang seimbang berarti ketiga fitur sama-sama menentukan segmen. "
-                       "Jika satu fitur >70%, cluster praktis hanya dibedakan oleh fitur itu.")
+        st.markdown("**Pengaruh tiap fitur terhadap pembagian cluster (dari centroid model)**")
+        infl = feature_influence(art)
+        st.dataframe(infl.style.format({"Selisih antar centroid (0-1)": "{:.3f}",
+                                        "Pengaruh (%)": "{:.1f}"}), width="stretch")
+        st.caption("Pengaruh yang seimbang berarti ketiga fitur sama-sama menentukan segmen. "
+                   "Jika satu fitur >70%, cluster praktis hanya dibedakan oleh fitur itu.")
 
 
 if __name__ == "__main__":               # dijalankan langsung: streamlit run evaluasi.py
-    st.set_page_config(page_title="Evaluasi Model", layout="wide")
+    st.set_page_config(page_title="Evaluasi Model", page_icon="📊", layout="wide")
     page_evaluasi()
