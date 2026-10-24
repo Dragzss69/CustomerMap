@@ -2,3 +2,5 @@ Data/food_delivery_orders_dataset-selected-columns.csv
 
 Model/kmeans_model.pkl
 Model/scaler.pkl
+__pycache__/
+*.pyc

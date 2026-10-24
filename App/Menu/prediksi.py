@@ -1,4 +1,5 @@
 import pickle
+import sys
 from datetime import date
 from pathlib import Path
 
@@ -7,6 +8,10 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))   # supaya cm_style ketemu saat dijalankan langsung
+from cm_style import (CUSTOMER_COLOR, SEGMENT_COLORS, action_list, hero, inject, kpi, result_card,  # noqa: E402
+                      section, segment_cards, steps, style_fig)
 
 # Model hasil training_v2.py (dicari di CustomerMap/Model/, Menu/, App/, CustomerMap/)
 MODEL_FILENAME = "kmeans_model_v2.pkl"
@@ -35,13 +40,6 @@ FEATURE_NAMES = {
 
 SEGMENT_ORDER = ("Pelanggan Loyal", "Pelanggan Reguler", "Pelanggan Pasif")
 
-SEGMENT_COLORS = {
-    "Pelanggan Loyal": "#3b82f6",
-    "Pelanggan Reguler": "#2e9e5b",
-    "Pelanggan Pasif": "#f59e0b",
-}
-CUSTOMER_COLOR = "#8b5cf6"
-
 SEGMENT_ACTIONS = {
     "Pelanggan Loyal": ["Beri poin reward atau program loyalitas", "Tawarkan akses promo eksklusif",
                         "Ajak memberi ulasan atau referral"],
@@ -50,7 +48,7 @@ SEGMENT_ACTIONS = {
     "Pelanggan Pasif": ["Kirim voucher comeback", "Kirim notifikasi personal (push atau WhatsApp)",
                         "Lakukan survei alasan berhenti"],
 }
-
+ CHART_CONFIG = {"displayModeBar": False}
 
 # ----------------------------------------------------------------------------
 # Memuat model
@@ -195,44 +193,24 @@ def feature_sensitivity(art: dict, x_raw: pd.DataFrame, labels: dict) -> pd.Data
             x = x_raw.copy()
             x[f] = nilai
             c = int(km.predict(scaler.transform(to_model_space(art, x)))[0])
-            out[nama] = labels.get(c, f"Cluster {c}") + ("" if c == base else "  ← berubah")
+            out[nama] = labels.get(c, f"Cluster {c}") + ("" if c == base else "  (berubah)")
         rows.append(out)
     return pd.DataFrame(rows).set_index("Fitur diubah")
 
 
 # ----------------------------------------------------------------------------
-# Tampilan (gaya dashboard)
+# Tampilan
 # ----------------------------------------------------------------------------
-CSS = """
-<style>
-.cm-badge{border-radius:14px;padding:16px 14px;text-align:center;color:#fff;margin:6px 0 4px 0}
-.cm-badge .big{font-size:1.5rem;font-weight:800;line-height:1.25}
-.cm-badge .sub{font-size:.8rem;opacity:.92;margin-top:2px}
-.cm-h{font-weight:700;font-size:1.02rem;margin:2px 0 8px 0}
-.cm-label{font-size:.85rem;opacity:.7}
-.cm-value{font-size:1.85rem;font-weight:800;line-height:1.2;margin:2px 0 8px 0}
-.cm-bar{height:8px;border-radius:6px;background:rgba(128,128,128,.25);overflow:hidden}
-.cm-bar>div{height:100%;border-radius:6px}
-.cm-note{font-size:.78rem;opacity:.7;margin-top:6px}
-.cm-row{display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid rgba(128,128,128,.2);font-size:.9rem}
-.cm-row:last-child{border-bottom:none}
-.cm-ico{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:.8rem;font-weight:800;color:#fff;flex:none}
-.cm-seg{font-size:1.05rem;font-weight:800;margin-bottom:4px}
-.cm-li{font-size:.88rem;margin:3px 0}
-</style>
-"""
-
-
 def rupiah(v: float) -> str:
     return "Rp " + f"{v:,.0f}".replace(",", ".")
 
 
-def kpi_card(label: str, value: str, pos: float = None, color: str = "", note: str = "") -> None:
-    st.markdown(
-        f'<div class="cm-label">{label}</div>'
-        f'<div class="cm-value">{value}</div>',
-        unsafe_allow_html=True,
-    )
+def ringkas_rp(v: float) -> str:
+    if v >= 1_000_000:
+        return f"{v / 1_000_000:.1f} jt"
+    if v >= 1_000:
+        return f"{v / 1_000:.0f} rb"
+    return f"{v:.0f}"
 
 
 def decision_factors(art: dict, x_scaled: np.ndarray, cluster: int, dists: np.ndarray):
@@ -254,23 +232,30 @@ def decision_factors(art: dict, x_scaled: np.ndarray, cluster: int, dists: np.nd
 
 def donut_chart(names, values, colors, center_text) -> go.Figure:
     fig = go.Figure(go.Pie(
-        labels=names, values=values, hole=0.66, sort=False, direction="clockwise",
-        marker=dict(colors=colors), textinfo="none",
+        labels=names, values=values, hole=0.7, sort=False, direction="clockwise",
+        marker=dict(colors=colors, line=dict(color="#0b1226", width=3)), textinfo="none",
         hovertemplate="%{label}: %{value:.1f}%<extra></extra>",
     ))
     fig.update_layout(
-        height=300, margin=dict(t=10, b=10, l=10, r=10),
+        margin=dict(t=10, b=10, l=10, r=10),
         legend=dict(orientation="h", y=-0.02, x=0.5, xanchor="center"),
-        annotations=[dict(text=center_text, x=0.5, y=0.5, font_size=22, showarrow=False)],
+        annotations=[dict(text=f"<b>{center_text}</b>", x=0.5, y=0.5, font=dict(size=30, color="#ffffff"), showarrow=False)],
     )
-    return fig
+    return style_fig(fig, 310)
+
+
+SHORT_NAMES = {
+    "sum_order_total": "Belanja",
+    "count_order_total": "Order",
+    "recency_days": "Recency",
+}
 
 
 def compare_chart(art: dict, x_scaled: np.ndarray, clusters_by_label: dict) -> go.Figure:
     centers = art["model"].cluster_centers_
     rows = []
     for i, f in enumerate(art["features"]):
-        nama = FEATURE_NAMES.get(f, f)
+        nama = SHORT_NAMES.get(f, f)
         rows.append({"Fitur": nama, "Seri": "Pelanggan ini", "Nilai": float(np.clip(x_scaled[0][i], 0, 1))})
         for lbl in SEGMENT_ORDER:
             c = clusters_by_label.get(lbl)
@@ -282,13 +267,28 @@ def compare_chart(art: dict, x_scaled: np.ndarray, clusters_by_label: dict) -> g
         color_discrete_map={**SEGMENT_COLORS, "Pelanggan ini": CUSTOMER_COLOR},
         category_orders={"Seri": seri},
     )
+    fig.update_traces(marker_line_width=0)
     fig.update_layout(
-        height=300, margin=dict(t=10, b=10, l=10, r=10), legend_title_text="",
-        legend=dict(orientation="h", y=-0.2, x=0.5, xanchor="center"),
-        xaxis=dict(range=[0, 1.05]), yaxis_title=None,
+        showlegend=False,                       # legenda diganti versi HTML (lihat compare_legend)
+        margin=dict(t=8, b=8, l=8, r=16), bargap=0.30, bargroupgap=0.06,
+        xaxis=dict(range=[0, 1.05], title=None, tickvals=[0, 0.25, 0.5, 0.75, 1]),
+        yaxis=dict(title=None, automargin=True),
     )
-    return fig
+    return style_fig(fig, 300)
 
+
+def compare_legend(clusters_by_label: dict) -> None:
+    """Legenda di atas grafik (HTML), supaya tidak pernah menimpa judul sumbu."""
+    items = [("Pelanggan ini", CUSTOMER_COLOR)] + [
+        (s, SEGMENT_COLORS[s]) for s in SEGMENT_ORDER if s in clusters_by_label
+    ]
+    html = "".join(
+        f'<span style="display:inline-flex;align-items:center;gap:6px;margin:0 14px 6px 0;'
+        f'font-size:.8rem;color:#cbd5e1">'
+        f'<i style="width:10px;height:10px;border-radius:3px;background:{c};display:inline-block"></i>{n}</span>'
+        for n, c in items
+    )
+    st.markdown(f'<div style="margin:0 0 6px 2px">{html}</div>', unsafe_allow_html=True)
 
 def centroid_table(art: dict, cluster_labels: dict) -> pd.DataFrame:
     """Profil rata-rata tiap segmen dalam satuan yang mudah dibaca."""
@@ -304,29 +304,31 @@ def centroid_table(art: dict, cluster_labels: dict) -> pd.DataFrame:
 
 
 def render_overview(art: dict, cluster_labels: dict, incomplete: bool = False) -> None:
-    """Tampilan awal (sebelum prediksi): ringkasan tiap segmen."""
+    """Tampilan awal (sebelum prediksi): ringkasan tiap segmen + langkah pakai."""
     prof = centroid_table(art, cluster_labels)
-    st.markdown('<div class="cm-h">Ringkasan segmen pelanggan</div>', unsafe_allow_html=True)
-    cols = st.columns(len(SEGMENT_ORDER))
-    for col, lbl in zip(cols, SEGMENT_ORDER):
-        with col, st.container(border=True):
-            color = SEGMENT_COLORS[lbl]
-            st.markdown(f'<div class="cm-seg" style="color:{color}">{lbl}</div>',
-                        unsafe_allow_html=True)
-            st.caption(CLUSTER_DESC[lbl])
+    section("Ringkasan segmen pelanggan", "profil rata-rata tiap segmen dari model")
+    items = []
+    for lbl in SEGMENT_ORDER:
+        tiles = None
+        if lbl in prof.index:
+            r = prof.loc[lbl]
+            tiles = [(f"{r['Frekuensi (order)']:.1f}x", "Frekuensi"),
+                     (ringkas_rp(r["Monetary (Rp)"]), "Belanja"),
+                     (f"{r['Recency (hari)']:.1f} hr", "Recency")]
+        items.append({"name": lbl, "color": SEGMENT_COLORS[lbl], "desc": CLUSTER_DESC[lbl], "tiles": tiles})
+    segment_cards(items)
     if incomplete:
         st.warning("Lengkapi dulu Frekuensi, Monetary, dan Recency, lalu klik **Prediksi Segmen**.")
-    else:
-        st.info("Isi data pelanggan di panel kiri lalu klik **Prediksi Segmen**.")
+    steps([("Isi data", "Masukkan frekuensi, monetary, dan recency di panel kiri."),
+           ("Klik Prediksi Segmen", "Model menghitung kedekatan pelanggan ke tiap segmen."),
+           ("Lihat hasil", "Segmen, grafik perbandingan, dan rekomendasi tindakan.")])
 
 
 # ----------------------------------------------------------------------------
 # Halaman
 # ----------------------------------------------------------------------------
 def page_simulator(art: dict = None):
-    st.markdown(CSS, unsafe_allow_html=True)
-    st.title("Simulator Prediksi Segmen Pelanggan")
-
+    inject()
     try:
         if art is not None:
             try:
@@ -341,16 +343,16 @@ def page_simulator(art: dict = None):
         st.stop()
         return
 
-    st.caption("Model ini digunakan untuk memprediksi dan mengelompokkan segmen perilaku pelanggan "
-               "berdasarkan analisis pola transaksi RFM (Recency, Frequency, Monetary).")
+    hero("Simulator Prediksi Segmen Pelanggan",
+         "Prediksi dan kelompokkan segmen perilaku pelanggan berdasarkan pola transaksi RFM "
+         "(Recency, Frequency, Monetary).",
+         ["Model K-Means", f"{len(art['cluster_labels'])} segmen",
+          f"Jendela {int(art['preprocess']['window_days'])} hari"])
 
     feats = art["features"]
     cluster_labels = art["cluster_labels"]
     clusters_by_label = {lbl: c_id for c_id, lbl in cluster_labels.items()}
-    snap = pd.Timestamp(art["preprocess"]["snapshot_date"])
     W = int(art["preprocess"]["window_days"])
-    wstart = art["preprocess"].get("window_start")
-    wstart = pd.Timestamp(wstart) if wstart is not None else snap - pd.Timedelta(days=W - 1)
     dmin, dmax = feature_ranges(art)
     sig = hash(art["model"].cluster_centers_.tobytes())
 
@@ -358,8 +360,8 @@ def page_simulator(art: dict = None):
 
     # ---------------- Panel kiri: input ----------------
     with col_left:
-        with st.container(border=True):
-            st.markdown('<div class="cm-h">Input Data Pelanggan</div>', unsafe_allow_html=True)
+        with st.container(border=True, key="cmcard_input"):
+            section("Input Data Pelanggan")
             with st.form("sim_form", border=False):
                 count = st.number_input(
                     f"Frekuensi: berapa kali memesan dalam {W} hari terakhir?",
@@ -385,7 +387,7 @@ def page_simulator(art: dict = None):
                     min_value=1,
                     max_value=W,
                     value=None,
-                    placeholder=f"1 - 30",
+                    placeholder=f"1 - {W}",
                     step=1,
                     help=f"1 = order terakhir pada hari acuan, {W} = order terakhir di hari pertama jendela.",
                 )
@@ -410,20 +412,14 @@ def page_simulator(art: dict = None):
     if res is not None:
         cluster, dists, x_raw, x_scaled = res["cluster"], res["dists"], res["x_raw"], res["x_scaled"]
         label = cluster_labels.get(cluster, f"Cluster {cluster}")
-        color = SEGMENT_COLORS.get(label, "#64748b")
+        color = SEGMENT_COLORS.get(label, "#94a3b8")
         inv = 1.0 / (dists + 1e-9)
         closeness = inv / inv.sum()
-        runner = decision_factors(art, x_scaled, cluster, dists)
 
         with col_left:
-            with st.container(border=True):
-                st.markdown('<div class="cm-h">Hasil Prediksi</div>', unsafe_allow_html=True)
-                st.markdown(
-                    f'<div class="cm-badge" style="background:{color}">'
-                    f'<div class="big">{label}</div>'
-                    f'<div class="sub">kemiripan {closeness[cluster] * 100:.1f}% · cluster {cluster}</div></div>',
-                    unsafe_allow_html=True,
-                )
+            with st.container(border=True, key="cmcard_hasil"):
+                section("Hasil Prediksi")
+                result_card(label, color, float(closeness[cluster] * 100), cluster)
 
     # ---------------- Panel utama ----------------
     with col_main:
@@ -440,43 +436,46 @@ def page_simulator(art: dict = None):
                 st.warning("Nilai berikut berada di luar rentang data training, hasil prediksi "
                            "kurang dapat diandalkan: " + ", ".join(out_of_range))
 
-            prof = centroid_table(art, cluster_labels)
-            seg = prof.loc[label] if label in prof.index else None
             xs = dict(zip(feats, x_scaled[0]))
-
             k1, k2, k3 = st.columns(3)
-            with k1, st.container(border=True):
-                kpi_card("Frekuensi", f"{x_raw['count_order_total'].iloc[0]:,.0f} order",
-                         None, color,"")
-            with k2, st.container(border=True):
-                kpi_card("Monetary", rupiah(x_raw["sum_order_total"].iloc[0] * ORDER_TOTAL_UNIT),
-                         None, color, "")
-            with k3, st.container(border=True):
-                kpi_card("Recency", f"{x_raw['recency_days'].iloc[0]:,.0f} hari",
-                         None, color, "")
+            with k1:
+                kpi("Frekuensi", f"{x_raw['count_order_total'].iloc[0]:,.0f} order", "F", color,
+                    pos=xs["count_order_total"],
+                    note=f"Rentang training: {dmin['count_order_total']:.0f} – {dmax['count_order_total']:.0f} order")
+            with k2:
+                kpi("Monetary", rupiah(x_raw["sum_order_total"].iloc[0] * ORDER_TOTAL_UNIT), "M", color,
+                    pos=xs["sum_order_total"],
+                    note=(f"Rentang training: {ringkas_rp(dmin['sum_order_total'] * ORDER_TOTAL_UNIT)} – "
+                          f"{ringkas_rp(dmax['sum_order_total'] * ORDER_TOTAL_UNIT)}"))
+            with k3:
+                kpi("Recency", f"{x_raw['recency_days'].iloc[0]:,.0f} hari", "R", color,
+                    pos=xs["recency_days"],
+                    note=f"Rentang training: {dmin['recency_days']:.0f} – {dmax['recency_days']:.0f} hari")
 
             g1, g2 = st.columns([1, 1.25])
-            with g1, st.container(border=True):
-                st.markdown('<div class="cm-h">Kedekatan ke tiap segmen</div>', unsafe_allow_html=True)
+            with g1, st.container(border=True, key="cmcard_g1"):
+                section("Kedekatan ke tiap segmen")
                 names = [s for s in SEGMENT_ORDER if s in clusters_by_label]
                 vals = [closeness[clusters_by_label[s]] * 100 for s in names]
                 st.plotly_chart(
                     donut_chart(names, vals, [SEGMENT_COLORS[s] for s in names],
                                 f"{closeness[cluster] * 100:.0f}%"),
                     width="stretch",
+                    config=CHART_CONFIG,
                 )
-            with g2, st.container(border=True):
-                st.markdown('<div class="cm-h">Posisi pelanggan dibanding rata-rata segmen</div>',
-                            unsafe_allow_html=True)
-                st.plotly_chart(compare_chart(art, x_scaled, clusters_by_label), width="stretch")
+            with g2, st.container(border=True, key="cmcard_g2"):
+                section("Posisi pelanggan dibanding rata-rata segmen")
+                compare_legend(clusters_by_label)
+                st.plotly_chart(compare_chart(art, x_scaled, clusters_by_label),
+                                width="stretch", config=CHART_CONFIG)
+                st.caption("Skala 0–1: semakin panjang batang, semakin tinggi nilainya dibanding data training.")
 
-            with st.container(border=True):
-                st.markdown('<div class="cm-h">Rekomendasi tindakan</div>', unsafe_allow_html=True)
-                st.write(CLUSTER_DESC.get(label, ""))
-                st.markdown("".join(f'<div class="cm-li">• {a}</div>' for a in SEGMENT_ACTIONS.get(label, [])),
-                            unsafe_allow_html=True)
+            with st.container(border=True, key="cmcard_rekom"):
+                section("Rekomendasi tindakan", label)
+                st.markdown(f'<div class="cx-rec-desc">{CLUSTER_DESC.get(label, "")}</div>', unsafe_allow_html=True)
+                action_list(SEGMENT_ACTIONS.get(label, []), color)
 
 
 if __name__ == "__main__":               # dijalankan langsung: streamlit run prediksi.py
-    st.set_page_config(page_title="Simulator Prediksi", page_icon="🔮", layout="wide")
+    st.set_page_config(page_title="Simulator Prediksi", layout="wide")
     page_simulator()
