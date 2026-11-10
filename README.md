@@ -224,11 +224,3 @@ CustomerMap adalah alat bantu analitik berbasis web yang mengubah data order men
 | 1 | [Moh.Nabil Syahputra] | [F55124079] | Backend Developer | Logika di balik aplikasi: pemuatan model `.pkl`, praproses dan prediksi segmen, perhitungan evaluasi (agregasi jendela 30 hari, deteksi outlier, Silhouette, DBI), validasi isian dan berkas CSV, serta penanganan pesan kesalahan (`Menu/prediksi.py` dan `Menu/evaluasi.py` bagian fungsi) |
 | 2 | [Salsabila] | [F55124044] | Frontend Developer | Antarmuka Streamlit: `app.py` (sidebar dan navigasi), Beranda, tata letak Simulator Prediksi dan Evaluasi Model (kartu, tabel, grafik Plotly), tema warna, dan tampilan pesan |
 | 3 | [Lionel Geraldo Mansa] | [F55124064] | Data Analyst / Machine Learning Engineer | Pemahaman dan pembersihan data, pemilihan fitur RFM, pemodelan di RapidMiner, replikasi dan pelatihan K-Means di Python (`training.py`), penentuan nilai k, serta evaluasi Silhouette, DBI, dan WCSS |
-
-## 6. Struktur Proyek dan Cara Menjalankan
-
-### Struktur proyek
-
-
-### Teknologi
-Python, Streamlit, scikit-learn, pandas, NumPy, Plotly, dan RapidMiner (Altair AI Studio) untuk pemodelan awal dan verifikasi.
